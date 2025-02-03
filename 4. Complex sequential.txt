@@ -1,0 +1,286 @@
+import pandas as pd
+import ast
+import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+from IPython.display import HTML, display
+
+def process_block(data, block_index):
+    fingers_data = []
+    for i in range(1, 6):
+        rt = ast.literal_eval(data.loc[block_index, f'resp_{i}.rt'])
+        rt = [float(x) for x in rt if x is not None]
+        duration = ast.literal_eval(data.loc[block_index, f'resp_{i}.duration'])
+        duration = [10 if x is None else x for x in duration]
+        released = [x + y for x, y in zip(rt, duration)]
+        intervals = [(released[j], rt[j + 1]) for j in range(len(rt) - 1)]
+        fingers_data.append(intervals)
+    return tuple(fingers_data)
+
+def find_overlapping_intervals(data, labels):
+    overlaps = []
+    for i, finger_data in enumerate(data):
+        for j in range(len(finger_data)):
+            for k in range(j + 1, len(finger_data)):
+                start1, end1 = finger_data[j]
+                start2, end2 = finger_data[k]
+                if max(start1, start2) < min(end1, end2):
+                    overlaps.append((labels[i], labels[i], (start1, end1), (start2, end2)))
+        for j in range(i + 1, len(data)):
+            for interval1 in finger_data:
+                for interval2 in data[j]:
+                    start1, end1 = interval1
+                    start2, end2 = interval2
+                    if max(start1, start2) < min(end1, end2):
+                        overlaps.append((labels[i], labels[j], interval1, interval2))
+    return overlaps
+
+def remove_overlapping_intervals(data, overlaps, labels):
+    updated_data = [finger_data[:] for finger_data in data]
+    for overlap in overlaps:
+        finger1, finger2, interval1, interval2 = overlap
+        index1 = labels.index(finger1)
+        index2 = labels.index(finger2)
+        if interval1 in updated_data[index1]:
+            updated_data[index1].remove(interval1)
+        if interval2 in updated_data[index2]:
+            updated_data[index2].remove(interval2)
+    return updated_data
+
+def print_colored_sequence(timeline_marks):
+    """Print the sequence with deviations from the pattern colored in red using HTML."""
+    pattern = [1, 2, 3, 4, 5]
+    current_position = 0
+    
+    html_parts = ['<div style="font-family: monospace;">Timeline Marks: [']
+    
+    for i, mark in enumerate(timeline_marks):
+        expected_number = pattern[current_position]
+        
+        if mark != expected_number:
+            # Number doesn't match pattern - display in red
+            html_parts.append(f'<span style="color: red;">{mark}</span>')
+        else:
+            # Number matches pattern - display normally
+            html_parts.append(str(mark))
+        
+        # Move to next position in pattern
+        current_position = (current_position + 1) % 5
+        
+        # Add comma and space if not the last number
+        if i < len(timeline_marks) - 1:
+            html_parts.append(', ')
+    
+    html_parts.append(']</div>')
+    display(HTML(''.join(html_parts)))
+
+def analyze_pattern(fingers, pattern, pattern_name=""):
+    """Analyze pattern occurrences and calculate errors."""
+    pattern_length = len(pattern)
+    count = 0
+    for i in range(len(fingers) - pattern_length + 1):
+        if fingers[i:i + pattern_length] == pattern:
+            count += 1
+    return count
+
+def analyze_sequence(sequence):
+    # Step 1: Find consecutive duplicates and mark as False
+    is_unique = [True]  # First element is always True
+    for i in range(1, len(sequence)):
+        if sequence[i] == sequence[i - 1]:
+            is_unique.append(False)
+        else:
+            is_unique.append(True)
+
+    # Step 2: Generate timeline marks with duplicates highlighted in red
+    timeline_output = []
+    for num, unique in zip(sequence, is_unique):
+        if unique:
+            timeline_output.append(f"\033[1;97m{num}\033[0m")  # Non-duplicates in bright white
+        else:
+            timeline_output.append(f"\033[1;91m{num}\033[0m")  # Duplicates in bright red
+
+    # Print the timeline marks
+    print("Timeline Marks:", " ".join(timeline_output))
+
+    # Step 3: Remove duplicates and prepare the cleared sequence
+    cleared_sequence = [num for num, unique in zip(sequence, is_unique) if unique]
+    print("Timeline Marks Cleared:", " ".join(map(str, cleared_sequence)))
+
+    # Step 4: Analyze the cleared sequence
+    correct_marks = []
+    for i, num in enumerate(cleared_sequence):
+        if num == 1:
+            if (i + 1 < len(cleared_sequence) and cleared_sequence[i + 1] == 2) or (i > 0 and cleared_sequence[i - 1] == 5):
+                correct_marks.append(True)
+            else:
+                correct_marks.append(False)
+        elif num == 2:
+            if (i + 1 < len(cleared_sequence) and cleared_sequence[i + 1] == 3) or (i > 0 and cleared_sequence[i - 1] == 1):
+                correct_marks.append(True)
+            else:
+                correct_marks.append(False)
+        elif num == 3:
+            if (i + 1 < len(cleared_sequence) and cleared_sequence[i + 1] == 4) or (i > 0 and cleared_sequence[i - 1] == 2):
+                correct_marks.append(True)
+            else:
+                correct_marks.append(False)
+        elif num == 4:
+            if (i + 1 < len(cleared_sequence) and cleared_sequence[i + 1] == 5) or (i > 0 and cleared_sequence[i - 1] == 3):
+                correct_marks.append(True)
+            else:
+                correct_marks.append(False)
+        elif num == 5:
+            if (i + 1 < len(cleared_sequence) and cleared_sequence[i + 1] == 1) or (i > 0 and cleared_sequence[i - 1] == 4):
+                correct_marks.append(True)
+            else:
+                correct_marks.append(False)
+
+    # Step 5: Generate analyzed timeline with incorrect marks highlighted in blue
+    analyzed_output = []
+    for num, correct in zip(cleared_sequence, correct_marks):
+        if correct:
+            analyzed_output.append(f"\033[1;97m{num}\033[0m")  # Correct numbers in bright white
+        else:
+            analyzed_output.append(f"\033[1;94m{num}\033[0m")  # Incorrect numbers in bright blue
+
+    print("Analyzed Timeline Marks:", " ".join(analyzed_output))
+
+    # Step 6: Prepare the correct cleared sequence
+    correct_cleared_sequence = [num for num, correct in zip(cleared_sequence, correct_marks) if correct]
+
+    # Step 7: Print summary
+    print("Total taps before duplicate removal:", len(sequence))
+    print("Total taps after duplicate removal:", len(cleared_sequence))
+    print("Correct taps:", len(correct_cleared_sequence))
+
+    # **RETURN A DICTIONARY WITH RESULTS**
+    return {
+        "cleared_sequence": cleared_sequence,
+        "correct_cleared_sequence": correct_cleared_sequence,
+        "total_taps": len(sequence),
+        "cleared_taps": len(cleared_sequence),
+        "correct_taps": len(correct_cleared_sequence)
+    }
+
+
+def analyze_all_blocks(file_path):
+    # Load the data
+    data = pd.read_csv(file_path)
+    
+    # Store overall results
+    all_results = {}
+    
+    # Process all blocks
+    for block_num in range(1, 11):
+        print(f"\n{'='*50}")
+        print(f"Processing Block {block_num}")
+        print(f"{'='*50}\n")
+        
+        block_index = block_num + 2
+        
+        # Get tapping start and stop times
+        tapping_started = data.loc[block_index, 'tapping.started']
+        tapping_stopped = data.loc[block_index, 'tapping.stopped']
+        
+        # Process block data
+        time_intervals = process_block(data, block_index)
+        finger_intervals = list(time_intervals)
+        finger_labels = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
+        
+        # Plot original data
+        fig, ax = plt.subplots(figsize=(12, 6))
+        finger_labels_rev = finger_labels[::-1]
+        finger_intervals_rev = finger_intervals[::-1]
+        
+        for i, finger_data in enumerate(finger_intervals_rev):
+            for start, end in finger_data:
+                ax.barh(i, end - start, left=start, color="green", edgecolor="black", height=0.4)
+        
+        ax.set_yticks(range(len(finger_labels_rev)))
+        ax.set_yticklabels(finger_labels_rev)
+        ax.set_xlabel("Time (s)")
+        ax.set_title(f"Buttons Released for Each Finger - Block {block_num}")
+        ax.set_xticks(np.arange(int(tapping_started), int(tapping_stopped) + 1, 1))
+        
+        plt.tight_layout()
+        plt.savefig(fr'C:\Users\12035\Desktop\plots\finger_press_visualization_block_{block_num}.png', 
+                   dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Find overlaps
+        overlapping_intervals = find_overlapping_intervals(finger_intervals, finger_labels)
+        
+        # Print overlaps
+        for overlap in overlapping_intervals:
+            print(f"Overlap detected between {overlap[0]} and {overlap[1]}: {overlap[2]} and {overlap[3]}")
+        
+        # Remove overlaps and create cleaned data
+        finger_intervals_cleaned = remove_overlapping_intervals(finger_intervals, overlapping_intervals, finger_labels)
+        
+        # Print the cleaned intervals
+        for finger, intervals in zip(finger_labels, finger_intervals_cleaned):
+            print(f"{finger}: {intervals}")
+        
+        # Plot cleaned data
+        fig, ax = plt.subplots(figsize=(12, 6))
+        finger_intervals_cleaned_rev = finger_intervals_cleaned[::-1]
+        
+        for i, finger_data in enumerate(finger_intervals_cleaned_rev):
+            for start, end in finger_data:
+                ax.barh(i, end - start, left=start, color="blue", edgecolor="black", height=0.4)
+        
+        ax.set_yticks(range(len(finger_labels_rev)))
+        ax.set_yticklabels(finger_labels_rev)
+        ax.set_xlabel("Time (s)")
+        ax.set_title(f"Button Press Durations Without Overlaps - Block {block_num}")
+        ax.set_xticks(np.arange(int(tapping_started), int(tapping_stopped) + 1, 1))
+        
+        plt.tight_layout()
+        plt.savefig(fr'C:\Users\12035\Desktop\plots\finger_press_cleaned_visualization_block_{block_num}.png', 
+                   dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Combine timeline marks
+        finger_marks = {finger: idx + 1 for idx, finger in enumerate(finger_labels)}
+        combined_timeline = []
+        for finger_idx, finger_data in enumerate(finger_intervals_cleaned):
+            mark = finger_marks[finger_labels[finger_idx]]
+            for interval in finger_data:
+                combined_timeline.append((interval[0], mark))
+
+        combined_timeline.sort(key=lambda x: x[0])
+        timeline_marks = [mark for _, mark in combined_timeline]
+
+        # Analyze the sequence
+        sequence_analysis = analyze_sequence(timeline_marks)
+
+        # Print analysis results
+        print("Cleared Sequence:", sequence_analysis["cleared_sequence"])
+        print("Correct Cleared Sequence:", sequence_analysis["correct_cleared_sequence"])
+        print("Total Taps:", sequence_analysis["total_taps"])
+        print("Taps After Duplicate Removal:", sequence_analysis["cleared_taps"])
+        print("Correct Taps:", sequence_analysis["correct_taps"])
+    
+    return all_results
+
+if __name__ == "__main__":
+    # Set your file path
+    file_path = r"D:\UHASSELT\1. phd\24 motor task\data\0400.csv"
+    
+    # Run analysis for all blocks
+    results = analyze_all_blocks(file_path)
+    
+    # Print summary of all blocks
+    print("\n\n" + "="*50)
+    print("SUMMARY OF ALL BLOCKS")
+    print("="*50)
+    
+    for block_num, block_results in results.items():
+        print(f"\nBlock {block_num}:")
+        print("First Analysis:")
+        print(f"  Pattern Count: {block_results['first_analysis']['pattern_count']}")
+        print(f"  Error Rate: {block_results['first_analysis']['error_rate']:.2%}")
+        print("Second Analysis:")
+        print(f"  Adjusted Error Rate: {block_results['second_analysis']['adjusted_error_rate']:.2%}")
+
