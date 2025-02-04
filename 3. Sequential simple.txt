@@ -1,0 +1,220 @@
+import pandas as pd
+import numpy as np
+from collections import defaultdict
+import ast
+
+# ANSI color codes
+RED = '\033[91m'
+RESET = '\033[0m'
+
+def highlight_non_patterns(fingers, pattern):
+    """Highlight all sequences that are NOT part of the main pattern."""
+    if not fingers:
+        return "[]"
+        
+    pattern_length = len(pattern)
+    highlighted_fingers = fingers.copy()
+    pattern_indices = set()
+    
+    # Find all pattern occurrences first
+    for i in range(len(fingers) - pattern_length + 1):
+        if fingers[i:i + pattern_length] == pattern:
+            # Mark indices that are part of the pattern
+            for j in range(i, i + pattern_length):
+                pattern_indices.add(j)
+    
+    # Create the highlighted string - now highlighting indices NOT in pattern_indices
+    result = ["["]
+    for i, finger in enumerate(fingers):
+        if i > 0:
+            result.append(", ")
+        
+        # Add color if this index is NOT part of a pattern
+        if i not in pattern_indices:
+            result.append(f"{RED}{finger}{RESET}")
+        else:
+            result.append(str(finger))
+    
+    result.append("]")
+    return "".join(result)
+
+def process_finger_data(data_row, resp_columns):
+    """Process finger response data for a given row."""
+    finger_data = []
+    for i, col in enumerate(resp_columns, 1):
+        try:
+            values = ast.literal_eval(data_row[col])
+            finger_data.extend((float(x), i) for x in values if x is not None)
+        except (ValueError, SyntaxError) as e:
+            print(f"Warning: Could not process data in row {data_row.name}, column {col}")
+            continue
+    
+    if not finger_data:
+        return [], []
+        
+    # Sort by time
+    finger_data.sort(key=lambda x: x[0])
+    times, fingers = zip(*finger_data)
+    return list(times), list(fingers)
+
+def count_pattern_occurrences(fingers, pattern):
+    """Count occurrences of a given pattern in finger sequence."""
+    if not fingers:
+        return 0
+    pattern_length = len(pattern)
+    count = 0
+    for i in range(len(fingers) - pattern_length + 1):
+        if fingers[i:i + pattern_length] == pattern:
+            count += 1
+    return count
+
+def calculate_error_metrics(fingers, main_pattern):
+    """Calculate error metrics using both methods."""
+    if not fingers:
+        return {
+            'sequential_errors': 0,
+            'sequential_error_rate': 0,
+            'adjusted_errors': 0,
+            'adjusted_error_rate': 0,
+            'total_taps': 0,
+            'pattern_counts': {
+                'main_pattern': 0,
+                'sub_patterns': dict(zip(['2345', '1345', '1245', '1235'], [0] * 4))
+            }
+        }
+
+    # First method: Sequential pattern matching
+    errors = 0
+    expected_index = 0
+    
+    for finger in fingers:
+        if finger == main_pattern[expected_index]:
+            expected_index = (expected_index + 1) % len(main_pattern)
+        else:
+            errors += 1
+            
+    # Second method: Pattern occurrence analysis
+    sub_patterns = [
+        [2, 3, 4, 5],
+        [1, 3, 4, 5],
+        [1, 2, 4, 5],
+        [1, 2, 3, 5]
+    ]
+    
+    main_pattern_count = count_pattern_occurrences(fingers, main_pattern)
+    sub_pattern_counts = [count_pattern_occurrences(fingers, p) for p in sub_patterns]
+    
+    # Calculate adjusted errors
+    adjusted_errors = (sub_pattern_counts[0] - main_pattern_count) + sum(sub_pattern_counts[1:])
+    
+    total_taps = len(fingers)
+    return {
+        'sequential_errors': errors,
+        'sequential_error_rate': errors / total_taps if total_taps > 0 else 0,
+        'adjusted_errors': adjusted_errors,
+        'adjusted_error_rate': adjusted_errors / total_taps if total_taps > 0 else 0,
+        'total_taps': total_taps,
+        'pattern_counts': {
+            'main_pattern': main_pattern_count,
+            'sub_patterns': dict(zip(['2345', '1345', '1245', '1235'], sub_pattern_counts))
+        }
+    }
+
+def analyze_block(data, block_number, row_mapping, resp_columns):
+    """Analyze a single block of finger pattern data."""
+    row_index = row_mapping[block_number]
+    main_pattern = [1, 2, 3, 4, 5]
+    
+    try:
+        times, fingers = process_finger_data(data.loc[row_index], resp_columns)
+    except KeyError:
+        print(f"\nBlock {block_number}: Row index {row_index} not found in data")
+        return None
+        
+    if not fingers:
+        print(f"\nBlock {block_number}: No valid data found")
+        return None
+    
+    print(f"\nBlock {block_number}")
+    print("Times:", times)
+    print("Fingers:", highlight_non_patterns(fingers, main_pattern))
+    
+    metrics = calculate_error_metrics(fingers, main_pattern)
+    
+    print("\n1st line of analyzes")
+    print(f"Total Errors: {metrics['sequential_errors']}")
+    print(f"Total Taps: {metrics['total_taps']}")
+    print(f"Error Rate: {metrics['sequential_error_rate']:.2%}")
+    
+    print("\n2nd line of analyzes")
+    print(f"Pattern counts:")
+    print(f"Main pattern {main_pattern}: {metrics['pattern_counts']['main_pattern']}")
+    for pattern_name, count in metrics['pattern_counts']['sub_patterns'].items():
+        print(f"Pattern {pattern_name}: {count}")
+    print(f"Adjusted Errors: {metrics['adjusted_errors']}")
+    print(f"Adjusted Error Rate: {metrics['adjusted_error_rate']:.2%}")
+    
+    return metrics
+
+def generate_summary_report(all_metrics):
+    """Generate a summary report across all blocks."""
+    if not all_metrics:
+        return
+        
+    print("\n=== SUMMARY REPORT ACROSS ALL BLOCKS ===")
+    
+    # Calculate averages and totals
+    total_blocks = len(all_metrics)
+    avg_error_rate = np.mean([m['sequential_error_rate'] for m in all_metrics])
+    avg_adjusted_error_rate = np.mean([m['adjusted_error_rate'] for m in all_metrics])
+    total_taps = sum(m['total_taps'] for m in all_metrics)
+    
+    print(f"\nTotal blocks analyzed: {total_blocks}")
+    print(f"Total taps across all blocks: {total_taps}")
+    print(f"Average error rate: {avg_error_rate:.2%}")
+    print(f"Average adjusted error rate: {avg_adjusted_error_rate:.2%}")
+    
+    # Find best and worst blocks
+    error_rates = [(i, m['sequential_error_rate']) for i, m in enumerate(all_metrics, 1)]
+    best_block = min(error_rates, key=lambda x: x[1])
+    worst_block = max(error_rates, key=lambda x: x[1])
+    
+    print(f"\nBest performing block: Block {best_block[0]} (Error rate: {best_block[1]:.2%})")
+    print(f"Worst performing block: Block {worst_block[0]} (Error rate: {worst_block[1]:.2%})")
+
+def main():
+    # Load the data from the CSV file
+    file_path = r'C:\Users\12035\Desktop\1. phd\24 motor task\data\0300.csv'
+    data = pd.read_csv(file_path)
+    
+    # Define response columns
+    resp_columns = [f'resp_{i}.rt' for i in range(1, 6)]
+    
+    # Define block to row index mapping
+    block_row_mapping = {
+        1: 3,
+        2: 4,
+        3: 5,
+        4: 6,   
+        5: 7,   
+        6: 8,   
+        7: 9,   
+        8: 10, 
+        9: 11,  
+        10: 12
+    }
+    
+    all_metrics = []
+    
+    # Process each block using the mapping
+    for block_num in sorted(block_row_mapping.keys()):
+        metrics = analyze_block(data, block_num, block_row_mapping, resp_columns)
+        if metrics:
+            all_metrics.append(metrics)
+            
+    # Generate summary report
+    generate_summary_report(all_metrics)
+
+if __name__ == "__main__":
+    main()
+

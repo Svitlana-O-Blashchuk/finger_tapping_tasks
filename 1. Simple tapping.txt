@@ -1,0 +1,118 @@
+import pandas as pd
+import numpy as np
+from collections import defaultdict
+import ast
+
+def load_and_process_data(data, freq, row_index):
+    """Process response and sound timing data for a given frequency"""
+    # Handle special case for 6.5 and 7.5 Hz
+    freq_str = str(freq).replace('.', '_') if isinstance(freq, float) else str(freq)
+    
+    resp_started = data[f'resp_{freq_str}Hz.started'].dropna().iloc[0]
+    resp_original = ast.literal_eval(data.loc[row_index, f'resp_{freq_str}Hz.rt'])
+    resp_times = resp_original - resp_started
+    
+    sound_times_raw = data.loc[row_index, f'sound{freq_str}Hz_play_times']
+    sound_times = ast.literal_eval(sound_times_raw)[:-1]
+    
+    return resp_times, sound_times
+
+def assign_responses_to_sounds(responses, sound_times):
+    """Assign responses to their corresponding sounds"""
+    assigned_responses = {sound_time: [] for sound_time in sound_times}
+    current_sound_index = 0
+    
+    for rt in responses:
+        while (current_sound_index < len(sound_times) - 1) and (rt >= sound_times[current_sound_index + 1]):
+            current_sound_index += 1
+        assigned_responses[sound_times[current_sound_index]].append(rt)
+    
+    # Redistribute responses if needed
+    sound_times_list = list(assigned_responses.keys())
+    for i in range(1, len(sound_times_list)):
+        prev_sound = sound_times_list[i - 1]
+        current_sound = sound_times_list[i]
+        if not assigned_responses[prev_sound] and len(assigned_responses[current_sound]) > 1:
+            assigned_responses[prev_sound].append(assigned_responses[current_sound].pop(0))
+            
+    return assigned_responses
+
+def create_response_dataframe(assigned_responses, sound_times, freq):
+    """Create a DataFrame with response analysis"""
+    freq_str = str(freq).replace('.', '_') if isinstance(freq, float) else str(freq)
+    
+    table_data = {
+        f"sound_play_times_{freq_str}Hz": [],
+        f"first_response_{freq_str}Hz": [],
+        f"reaction_time_{freq_str}Hz": [],
+        f"additional_responses_{freq_str}Hz": [],
+        f"accuracy_{freq_str}Hz": []
+    }
+    
+    accuracy_sum = reaction_time_sum = reaction_time_count = 0
+    
+    for sound_time in sound_times:
+        responses = assigned_responses[sound_time]
+        table_data[f"sound_play_times_{freq_str}Hz"].append(round(sound_time, 2))
+        
+        if responses:
+            first_response = round(responses[0], 2)
+            reaction_time = round(first_response - sound_time, 2)
+            accuracy = 0.5 if len(responses) > 1 else 1
+            
+            table_data[f"first_response_{freq_str}Hz"].append(first_response)
+            table_data[f"reaction_time_{freq_str}Hz"].append(reaction_time)
+            table_data[f"accuracy_{freq_str}Hz"].append(accuracy)
+            table_data[f"additional_responses_{freq_str}Hz"].append([round(r, 2) for r in responses[1:]] if len(responses) > 1 else "None")
+            
+            reaction_time_sum += reaction_time
+            reaction_time_count += 1
+            accuracy_sum += accuracy
+        else:
+            table_data[f"first_response_{freq_str}Hz"].append("None")
+            table_data[f"reaction_time_{freq_str}Hz"].append("N/A")
+            table_data[f"accuracy_{freq_str}Hz"].append(0)
+            table_data[f"additional_responses_{freq_str}Hz"].append("None")
+    
+    df = pd.DataFrame(table_data)
+    total_accuracy = round((accuracy_sum / len(sound_times)) * 100, 2)
+    avg_reaction_time = round((reaction_time_sum / reaction_time_count), 2) if reaction_time_count > 0 else "N/A"
+    
+    return df, total_accuracy, avg_reaction_time
+
+def analyze_frequency(data, freq, row_index):
+    """Analyze responses for a single frequency"""
+    resp_times, sound_times = load_and_process_data(data, freq, row_index)
+    assigned_responses = assign_responses_to_sounds(resp_times, sound_times)
+    df, accuracy, reaction_time = create_response_dataframe(assigned_responses, sound_times, freq)
+    
+    freq_str = str(freq).replace('.', '_') if isinstance(freq, float) else str(freq)
+    print(f"\nHz{freq_str}")
+    print(df)
+    print(f"\nTotal Accuracy_{freq_str}Hz: {accuracy}%")
+    print(f"Average Reaction Time_{freq_str}Hz: {reaction_time}\n")
+    
+    return df, accuracy, reaction_time
+
+# Main execution
+file_path = r'C:\Users\12035\Desktop\1. phd\24 motor task\data\0100.csv'
+data = pd.read_csv(file_path)
+
+# Dictionary mapping frequencies to their row indices
+freq_indices = {
+    1: 3,    # 1Hz data
+    2: 7,    # 2Hz data
+    3: 11,   # 3Hz data
+    4: 15,   # 4Hz data
+    5: 19,   # 5Hz data
+    6: 23,   # 6Hz data
+    6.5: 27, # 6.5Hz data
+    7: 31,   # 7Hz data
+    7.5: 35, # 7.5Hz data
+    8: 39    # 8Hz data
+}
+
+# Analyze each frequency
+for freq, index in freq_indices.items():
+    analyze_frequency(data, freq, index)
+

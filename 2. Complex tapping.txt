@@ -1,0 +1,304 @@
+import pandas as pd
+import numpy as np
+import ast
+
+def process_finger_data(data, frequency, finger_index, data_index):
+    """
+    Process data for a specific finger at a given frequency and index in the CSV file.
+    """
+    finger_key = f'resp_{frequency}Hz_{finger_index}'
+    if f'{finger_key}.rt' in data.columns and not pd.isna(data.loc[data_index, f'{finger_key}.rt']):
+        response_started = data.loc[data_index, f'{finger_key}.started']
+        pressed_raw = ast.literal_eval(data.loc[data_index, f'{finger_key}.rt'])
+        pressed_raw = [float(x) for x in pressed_raw if x is not None]
+        pressed = np.array(pressed_raw) - response_started
+
+        duration_raw = ast.literal_eval(data.loc[data_index, f'{finger_key}.duration'])
+        
+        # Replace None with 30.0 only if the last value in duration_raw is None
+        if duration_raw and duration_raw[-1] is None:
+            duration_raw[-1] = 30.0
+
+        # Replace any remaining None values with 30.0
+        duration = [float(x) if x is not None else 30.0 for x in duration_raw]
+
+        # Ensure `pressed` and `duration` have the same length
+        if len(pressed) != len(duration):
+            print(f"Warning: Length mismatch for frequency {frequency}Hz, finger {finger_index} at index {data_index}")
+            print(f"Pressed Raw: {pressed_raw}, Duration Raw: {duration_raw}")
+            return None, None
+
+        released = np.add(pressed, duration)
+        return pressed, released
+    else:
+        print(f"Finger {finger_index}_{frequency}Hz was not pressed; skipping this part of the code.")
+        return None, None
+
+def calculate_time_intervals(pressed, released):
+    """
+    Calculate time intervals based on pressed and released times.
+    """
+    if pressed is not None and pressed.size > 0:
+        intervals = [(0, pressed[0])]
+        if released is not None and released.size > 0:
+            for i in range(len(released) - 1):
+                intervals.append((released[i], pressed[i + 1]))
+            intervals.append((released[-1], 30))
+        else:
+            print("Released data is empty or undefined; skipping some time interval calculations.")
+        return intervals
+    else:
+        print("Pressed data is empty or undefined; skipping time interval calculation.")
+        return []
+
+def process_frequency_block(data, frequency, data_index):
+    """
+    Process the block of data for a given frequency and CSV index.
+    """
+    formatted_frequency = str(frequency).replace('.', '_')  # Format frequency for column names
+    all_intervals = {}
+    for finger_index in range(1, 6):
+        if finger_index == 2:  # Skip Finger 2
+            continue
+        pressed, released = process_finger_data(data, formatted_frequency, finger_index, data_index)
+        intervals = calculate_time_intervals(pressed, released)
+        all_intervals[f'Finger{finger_index}_intervals'] = intervals
+
+    play_times_raw = data.loc[data_index, f'sound{formatted_frequency}Hz_play_times']
+    play_times_original = ast.literal_eval(play_times_raw)
+    play_times = play_times_original[:-1]
+
+    return all_intervals, play_times
+
+# Load the data from the CSV file
+file_path = r'C:\Users\12035\Desktop\1. phd\24 motor task\data\0200.csv'
+data = pd.read_csv(file_path)
+
+# Define frequencies and indices
+frequency_index_mapping = {
+    1: 3,
+    2: 7,
+    2.5: 11,
+    3: 15,
+    3.5: 19,
+    4: 23,
+    4.5: 27,
+    5: 31,
+    5.5: 35,
+    6: 39
+}
+
+# Process each frequency block
+for frequency, data_index in frequency_index_mapping.items():
+    intervals, sound_play_times = process_frequency_block(data, frequency, data_index)
+    print(f"Intervals for {frequency}Hz:", intervals)
+    print(f"Sound play times for {frequency}Hz:", sound_play_times)
+
+def calculate_reaction_time_and_accuracy(finger_pressed, sound_play_times, frequency):
+    """
+    Calculate reaction time and accuracy for a specific finger and frequency.
+    """
+    # Dictionary to store responses assigned to each sound, initialize with empty lists
+    assigned_responses = {sound_time: [] for sound_time in sound_play_times}
+    current_sound_index = 0
+    
+    # Assign each response to the appropriate sound
+    for rt in finger_pressed:
+        # Move to the next sound if the response time is beyond the current sound's interval
+        while current_sound_index < len(sound_play_times) - 1 and rt >= sound_play_times[current_sound_index + 1]:
+            current_sound_index += 1
+
+        # Assign the response to the current sound
+        assigned_responses[sound_play_times[current_sound_index]].append(rt)
+
+    # Check for sounds with no responses, adjust assignments if the next sound has multiple responses
+    sound_times = list(assigned_responses.keys())  # List of sound times for ordered access
+    for i in range(1, len(sound_times)):
+        prev_sound = sound_times[i - 1]
+        current_sound = sound_times[i]
+        
+        # Condition: If previous sound has no response and current sound has multiple responses
+        if not assigned_responses[prev_sound] and len(assigned_responses[current_sound]) > 1:
+            # Move the first response from the current sound to the previous sound
+            assigned_responses[prev_sound].append(assigned_responses[current_sound].pop(0))
+
+    # Prepare data for the DataFrame
+    table_data = {
+        f"sound_play_times_{frequency}Hz": [],
+        f"first_response_{frequency}Hz": [],
+        f"reaction_time_{frequency}Hz": [],
+        f"additional_responses_{frequency}Hz": [],
+        f"accuracy_{frequency}Hz": []
+    }
+
+    accuracy_sum = 0  # Track sum of accuracies for total accuracy calculation
+    reaction_time_sum = 0  # Sum of all valid reaction times for average reaction time calculation
+    reaction_time_count = 0  # Count of valid reaction times
+
+    for sound_time in sound_play_times:
+        responses = assigned_responses[sound_time]
+        
+        # Add data to each column
+        table_data[f"sound_play_times_{frequency}Hz"].append(round(sound_time, 2))
+        if responses:
+            first_response = round(responses[0], 2)
+            reaction_time = round(first_response - sound_time, 2)
+            table_data[f"first_response_{frequency}Hz"].append(first_response)
+            table_data[f"reaction_time_{frequency}Hz"].append(reaction_time)
+            
+            # Update reaction time sum and count for average calculation
+            reaction_time_sum += reaction_time
+            reaction_time_count += 1
+            
+            # Determine accuracy
+            accuracy = 0.5 if len(responses) > 1 else 1
+            table_data[f"accuracy_{frequency}Hz"].append(accuracy)
+            accuracy_sum += accuracy
+        else:
+            table_data[f"first_response_{frequency}Hz"].append("None")
+            table_data[f"reaction_time_{frequency}Hz"].append("N/A")
+            table_data[f"accuracy_{frequency}Hz"].append(0)
+            accuracy_sum += 0
+        table_data[f"additional_responses_{frequency}Hz"].append([round(r, 2) for r in responses[1:]] if len(responses) > 1 else "None")
+
+    # Calculate total accuracy and average reaction time
+    total_accuracy = round((accuracy_sum / len(sound_play_times)) * 100, 2)
+    average_reaction_time = round((reaction_time_sum / reaction_time_count), 2) if reaction_time_count > 0 else "N/A"
+
+    return table_data, total_accuracy, average_reaction_time
+
+# Example usage for multiple frequencies
+frequency_index_mapping = {
+    1: 3,
+    2: 7,
+    2.5: 11,
+    3: 15,
+    3.5: 19,
+    4: 23,
+    4.5: 27,
+    5: 31,
+    5.5: 35,
+    6: 39
+}
+
+# Load the data from the CSV file
+file_path = r'C:\Users\12035\Desktop\1. phd\24 motor task\data\0200.csv'
+data = pd.read_csv(file_path)
+
+# Loop through frequencies
+for frequency, data_index in frequency_index_mapping.items():
+    formatted_frequency = str(frequency).replace('.', '_')
+    
+    # Get the pressed data for the current frequency
+    pressed_raw = ast.literal_eval(data.loc[data_index, f'resp_{formatted_frequency}Hz_2.rt'])
+    pressed_raw = [float(x) for x in pressed_raw if x is not None]
+    pressed = np.array(pressed_raw) - data.loc[data_index, f'resp_{formatted_frequency}Hz_2.started']
+    
+    # Get sound play times for the current frequency
+    play_times_raw = data.loc[data_index, f'sound{formatted_frequency}Hz_play_times']
+    play_times_original = ast.literal_eval(play_times_raw)
+    play_times = play_times_original[:-1]
+    
+    # Calculate reaction time and accuracy for Finger 2 (adjust as needed for other fingers)
+    table_data, total_accuracy, average_reaction_time = calculate_reaction_time_and_accuracy(pressed, play_times, frequency)
+
+    # Create DataFrame
+    df = pd.DataFrame(table_data)
+    
+    # Display results
+    print(f"\nFrequency: {frequency}Hz")
+    print(df)
+    print(f"Total Accuracy_{frequency}Hz: {total_accuracy}%")
+    print(f"Average Reaction Time_{frequency}Hz: {average_reaction_time}")
+
+# Prepare a summary table for all frequencies
+summary_data = {
+    "Block": list(frequency_index_mapping.keys()),
+    "Accuracy (%)": [],
+    "Reaction Time (s)": []
+}
+
+for frequency, data_index in frequency_index_mapping.items():
+    formatted_frequency = str(frequency).replace('.', '_')
+
+    # Get the pressed data for the current frequency
+    pressed_raw = ast.literal_eval(data.loc[data_index, f'resp_{formatted_frequency}Hz_2.rt'])
+    pressed_raw = [float(x) for x in pressed_raw if x is not None]
+    pressed = np.array(pressed_raw) - data.loc[data_index, f'resp_{formatted_frequency}Hz_2.started']
+
+    # Get sound play times for the current frequency
+    play_times_raw = data.loc[data_index, f'sound{formatted_frequency}Hz_play_times']
+    play_times_original = ast.literal_eval(play_times_raw)
+    play_times = play_times_original[:-1]
+
+    # Calculate reaction time and accuracy for Finger 2
+    _, total_accuracy, average_reaction_time = calculate_reaction_time_and_accuracy(pressed, play_times, frequency)
+
+    # Add results to the summary table
+    summary_data["Accuracy (%)"].append(total_accuracy)
+    summary_data["Reaction Time (s)"].append(average_reaction_time)
+
+# Create DataFrame for summary
+summary_df = pd.DataFrame(summary_data)
+
+# Display the summary table
+print(summary_df)
+
+# Initialize lists to store accuracy and reaction time
+accuracy_list = []
+reaction_time_list = []
+
+# Loop through each frequency block
+for frequency, data_index in frequency_index_mapping.items():
+    formatted_frequency = str(frequency).replace('.', '_')
+
+    # Get the pressed data for the current frequency
+    pressed_raw = ast.literal_eval(data.loc[data_index, f'resp_{formatted_frequency}Hz_2.rt'])
+    pressed_raw = [float(x) for x in pressed_raw if x is not None]
+    pressed = np.array(pressed_raw) - data.loc[data_index, f'resp_{formatted_frequency}Hz_2.started']
+
+    # Get sound play times for the current frequency
+    play_times_raw = data.loc[data_index, f'sound{formatted_frequency}Hz_play_times']
+    play_times_original = ast.literal_eval(play_times_raw)
+    play_times = play_times_original[:-1]
+
+    # Calculate reaction time and accuracy for Finger 2
+    _, total_accuracy, average_reaction_time = calculate_reaction_time_and_accuracy(pressed, play_times, frequency)
+
+    # Append results to the lists
+    accuracy_list.append(total_accuracy)
+    reaction_time_list.append(average_reaction_time)
+
+# Display the lists
+print("Accuracy List:", accuracy_list)
+print("Reaction Time List:", reaction_time_list)
+
+# Initialize lists to store accuracy and reaction time
+accuracy_list = []
+reaction_time_list = []
+
+# Loop through each frequency block
+for frequency, data_index in frequency_index_mapping.items():
+    formatted_frequency = str(frequency).replace('.', '_')
+
+    # Get the pressed data for the current frequency
+    pressed_raw = ast.literal_eval(data.loc[data_index, f'resp_{formatted_frequency}Hz_2.rt'])
+    pressed_raw = [float(x) for x in pressed_raw if x is not None]
+    pressed = np.array(pressed_raw) - data.loc[data_index, f'resp_{formatted_frequency}Hz_2.started']
+
+    # Get sound play times for the current frequency
+    play_times_raw = data.loc[data_index, f'sound{formatted_frequency}Hz_play_times']
+    play_times_original = ast.literal_eval(play_times_raw)
+    play_times = play_times_original[:-1]
+
+    # Calculate reaction time and accuracy for Finger 2
+    _, total_accuracy, average_reaction_time = calculate_reaction_time_and_accuracy(pressed, play_times, frequency)
+
+    # Append results to the lists
+    accuracy_list.append(total_accuracy)
+    reaction_time_list.append(average_reaction_time)
+
+# Display the lists
+print("Accuracy List:", accuracy_list)
+print("Reaction Time List:", reaction_time_list)
+
