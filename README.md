@@ -59,7 +59,7 @@ The correct pattern participants have to perform is [1,2,3,4,5]
 ### 4️⃣ Complex Sequential Analysis (`4. Sequential complex.docx`)
 
 #### Task
-Participants are instructed to tap your fingers in sequence from the thumb to the pinky (Thumb → Index → Middle → Ring → Pinky) as quickly and accurately as possible.
+Participants are instructed to tap their fingers in sequence from the thumb to the pinky (Thumb → Index → Middle → Ring → Pinky) as quickly and accurately as possible.
 - Thumb index is 1
 - Index index is 2
 - Middle index is 3
@@ -67,6 +67,20 @@ Participants are instructed to tap your fingers in sequence from the thumb to th
 - Pinky index is 5
 The correct pattern participants have to perform is [1,2,3,4,5].
 The finger taps are excluded, if any of the other 4 fingers were untapped.
+#### Outcome 
+- tapping pattern
+- total errors (taps outside the main pattern)
+- total taps
+- error rate (total errors/total taps*100%)
+
+### 5️⃣ Index-Middle Sequential Analysis (`5. Index-Middle finger tapping.docx`)
+
+#### Task
+Participants are instructed to tap their fingers in sequence Index → Middle → Index → Middle... as quickly and accurately as possible.
+- Index index is 2
+- Middle index is 3
+The correct pattern participants have to perform is [2,3].
+
 #### Outcome 
 - tapping pattern
 - total errors (taps outside the main pattern)
